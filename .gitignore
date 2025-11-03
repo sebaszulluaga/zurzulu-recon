@@ -1,0 +1,6 @@
+﻿output/
+results/
+*.log
+*.pem
+.vscode/
+__pycache__/

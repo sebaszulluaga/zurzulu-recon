@@ -1,0 +1,22 @@
+name: CI
+
+on: [push, pull_request]
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install shellcheck
+        run: sudo apt update && sudo apt install -y shellcheck
+      - name: Run shellcheck
+        run: shellcheck zurzulu-recon.sh || true
+
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install bats
+        run: sudo apt update && sudo apt install -y bats
+      - name: Run tests
+        run: bats tests || true

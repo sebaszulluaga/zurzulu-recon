@@ -1,0 +1,236 @@
+
+---
+
+# Script principal: `zurzulu-recon.sh`
+
+```bash
+#!/usr/bin/env bash
+# zurzulu-recon.sh - versión inicial
+# Uso responsable: ejecutar solo en activos con permiso.
+set -euo pipefail
+
+# Config/defaults
+PROGNAME="$(basename "$0")"
+LOGFILE="${PWD}/installer.log"
+DRY_RUN=0
+YES=0
+VERBOSE=0
+OUTDIR="output"
+TARGET=""
+TIMESTAMP="$(date -u +%Y%m%dT%H%M%SZ)"
+
+# Utils
+log() { echo "$(date -Iseconds) [INFO] $*" | tee -a "$LOGFILE"; }
+warn() { echo "$(date -Iseconds) [WARN] $*" | tee -a "$LOGFILE" >&2; }
+err() { echo "$(date -Iseconds) [ERROR] $*" | tee -a "$LOGFILE" >&2; }
+die() { err "$*"; exit 1; }
+
+usage() {
+  cat <<EOF
+$PROGNAME - Recon NA para entrevistas (zurzulu-recon)
+
+Opciones:
+  --target <domain>     Dominio objetivo (obligatorio)
+  --outdir <dir>        Directorio de salida (default: output)
+  --dry-run             Simular acciones (no ejecutar herramientas)
+  --yes                 Ejecutar sin pedir confirmación
+  --verbose             Mostrar más logs
+  -h, --help            Mostrar este mensaje
+EOF
+  exit 1
+}
+
+# parse args
+while (( "$#" )); do
+  case "$1" in
+    --target) TARGET="${2-}"; shift 2 ;;
+    --outdir) OUTDIR="${2-}"; shift 2 ;;
+    --dry-run) DRY_RUN=1; shift ;;
+    --yes) YES=1; shift ;;
+    --verbose) VERBOSE=1; shift ;;
+    -h|--help) usage ;;
+    *) err "Unknown arg: $1"; usage ;;
+  esac
+done
+
+[ -n "$TARGET" ] || usage
+
+confirm() {
+  local msg="$1"
+  if [ "$DRY_RUN" -eq 1 ]; then
+    log "[DRY-RUN] $msg"
+    return 0
+  fi
+  if [ "$YES" -eq 1 ]; then
+    return 0
+  fi
+  read -r -p "$msg [y/N]: " resp
+  [[ "$resp" =~ ^[Yy]$ ]]
+}
+
+safe_run() {
+  if [ "$DRY_RUN" -eq 1 ]; then
+    log "[DRY-RUN] $*"
+    return 0
+  fi
+  log "Ejecutando: $*"
+  eval "$@"
+}
+
+# check dependencies but do not fail hard: just warn
+check_cmd() {
+  if ! command -v "$1" >/dev/null 2>&1; then
+    warn "No encontrado: $1"
+    return 1
+  fi
+  return 0
+}
+
+check_prereqs() {
+  local need=(jq nmap whois dig)
+  local ok=0
+  for c in "${need[@]}"; do
+    if check_cmd "$c"; then ok=$((ok+1)); fi
+  done
+  if [ $ok -lt 1 ]; then
+    die "Parece que faltan utilidades básicas. Instala al menos: ${need[*]}"
+  fi
+  mkdir -p "$OUTDIR"
+}
+
+# collectors
+collect_whois() {
+  log "Recolectando whois..."
+  if check_cmd whois; then
+    safe_run "whois $TARGET | tee $OUTDIR/${TARGET}_whois.txt"
+  else
+    warn "whois no disponible, saltando."
+  fi
+}
+
+collect_dns() {
+  log "Recolectando DNS (A,NS,MX,TXT)..."
+  if check_cmd dig; then
+    safe_run "dig +noall +answer A $TARGET >> $OUTDIR/${TARGET}_dns.txt || true"
+    safe_run "dig +noall +answer NS $TARGET >> $OUTDIR/${TARGET}_dns.txt || true"
+    safe_run "dig +noall +answer MX $TARGET >> $OUTDIR/${TARGET}_dns.txt || true"
+    safe_run "dig +noall +answer TXT $TARGET >> $OUTDIR/${TARGET}_dns.txt || true"
+  else
+    warn "dig no disponible, saltando DNS."
+  fi
+}
+
+collect_subdomains() {
+  log "Buscando subdominios (subfinder/amass fallback)..."
+  local subfile="$OUTDIR/${TARGET}_subs.txt"
+  if check_cmd subfinder; then
+    safe_run "subfinder -d $TARGET -silent -o $subfile || true"
+  elif check_cmd amass; then
+    safe_run "amass enum -d $TARGET -o $subfile || true"
+  else
+    warn "Ni subfinder ni amass están instalados. Para resultados completos instala uno de ellos."
+    # fallback: try dig brute? skip for now
+    echo "$TARGET" > "$subfile"
+  fi
+}
+
+scan_ports() {
+  log "Escaneando puertos (nmap - top 1000)..."
+  local subs_file="$OUTDIR/${TARGET}_subs.txt"
+  local nmout="$OUTDIR/${TARGET}_nmap.json"
+  if check_cmd nmap; then
+    # leer subdominios y escanear cada uno
+    jq -n --arg target "$TARGET" '{}' > /dev/null 2>&1 || true
+    : > "$nmout" || true
+    while IFS= read -r host; do
+      [ -z "$host" ] && continue
+      log "Escaneando $host ..."
+      if [ "$DRY_RUN" -eq 1 ]; then
+        log "[DRY-RUN] nmap -sV -Pn --max-retries 1 -oX - $host"
+      else
+        nmap -sV -Pn --max-retries 1 -oX - "$host" | tee "$OUTDIR/${host}_nmap.xml" >/dev/null
+      fi
+    done < "$subs_file"
+  else
+    warn "nmap no disponible, saltando escaneo de puertos."
+  fi
+}
+
+detect_tech() {
+  log "Detección de tecnologías (whatweb si está)..."
+  if check_cmd whatweb; then
+    while IFS= read -r host; do
+      [ -z "$host" ] && continue
+      safe_run "whatweb --log-brief=$OUTDIR/${host}_whatweb.txt $host || true"
+    done < "$OUTDIR/${TARGET}_subs.txt"
+  else
+    warn "whatweb no instalado, saltando detección de tecnologías."
+  fi
+}
+
+generate_report() {
+  log "Generando reporte JSON/HTML resumido..."
+  # resumen mínimo: whois + count subdomains
+  local whoisfile="$OUTDIR/${TARGET}_whois.txt"
+  local subfile="$OUTDIR/${TARGET}_subs.txt"
+  local summary="$OUTDIR/${TARGET}-summary.json"
+  local report="$OUTDIR/${TARGET}-report.html"
+  local subs_count=0
+  [ -f "$subfile" ] && subs_count=$(wc -l < "$subfile" | tr -d ' ')
+  # whois excerpt
+  local whois_excerpt=""
+  if [ -f "$whoisfile" ]; then
+    whois_excerpt="$(head -n 20 "$whoisfile" | sed 's/"/\\"/g')"
+  fi
+
+  cat > "$summary" <<JSON
+{
+  "target": "$TARGET",
+  "timestamp": "$TIMESTAMP",
+  "subdomains_count": $subs_count,
+  "whois_excerpt": "$whois_excerpt"
+}
+JSON
+
+  cat > "$report" <<HTML
+<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>zurzulu-recon report - $TARGET</title></head>
+<body>
+<h1>zurzulu-recon - $TARGET</h1>
+<p>Generado: $TIMESTAMP</p>
+<ul>
+  <li>Subdominios encontrados: $subs_count</li>
+  <li>Resumen WHOIS (primeras 20 líneas):</li>
+</ul>
+<pre>$( [ -f "$whoisfile" ] && head -n 20 "$whoisfile" || echo "no whois" )</pre>
+</body>
+</html>
+HTML
+
+  log "Reportes: $summary , $report"
+}
+
+main() {
+  log "Comenzando zurzulu-recon para: $TARGET"
+  if [ "$DRY_RUN" -eq 1 ]; then
+    log "MODO DRY-RUN activado; no se ejecutarán acciones destructivas."
+  fi
+
+  check_prereqs
+
+  if ! confirm "Continuar con la recolección para $TARGET?"; then
+    die "Abortado por el usuario."
+  fi
+
+  collect_whois
+  collect_dns
+  collect_subdomains
+  scan_ports
+  detect_tech
+  generate_report
+
+  log "zurzulu-recon completado. Revisa $OUTDIR"
+}
+
+main "$@"

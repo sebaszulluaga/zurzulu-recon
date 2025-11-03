@@ -1,0 +1,5 @@
+# config.example.yml - parámetros configurables
+target: example.com
+outdir: output
+timeout: 30
+nmap_args: "-sV -Pn --max-retries 1"
