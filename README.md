@@ -20,4 +20,4 @@ Automatiza tareas de recolección de información, escaneo y análisis, ayudando
 
 ## Uso
 ```bash
-./zurzulu-recon.sh [opciones]
+./zurzulu-recon.sh dominio.com
