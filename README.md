@@ -1,25 +1,23 @@
-# zurzulu-recon
+# 🛡️ Zurzulu Recon
 
-**zurzulu-recon** — Script de reconocimiento OSINT/Recon automatizado.  
-Autor: Sebastián (zurzulu). Propósito: demostrar habilidades en automatización segura, recolección de información pública y generación de reportes. Usar únicamente con autorización.
+![Banner](https://via.placeholder.com/800x200.png?text=Zurzulu+Recon)
+
+## Descripción
+**Zurzulu Recon** es un script de reconocimiento y recopilación de información orientado a pruebas de seguridad y pentesting.  
+Automatiza tareas de recolección de información, escaneo y análisis, ayudando a los profesionales de ciberseguridad a ahorrar tiempo y aumentar la eficiencia en sus evaluaciones.
 
 ## Características
-- Recolecta: whois, DNS, subdominios (si está instalado `subfinder`/`amass`), escaneo básico con `nmap`, detección de tecnologías con `whatweb` (si presente).
-- Genera salida en JSON y HTML simple.
-- Modo `--dry-run`, logs, y confirmaciones para acciones críticas.
-- Comprobaciones de dependencias y manejo de errores.
-- Buenas prácticas: idempotencia, no uso de `curl | sh`, y mensajes claros sobre legalidad/uso.
+- Escaneo de subdominios y DNS.
+- Recolección de información de hosts y puertos.
+- Integración con herramientas de seguridad populares.
+- Generación de reportes detallados de manera automática.
+- Fácil de usar mediante comandos simples en terminal.
 
 ## Requisitos
-- Bash (>=4), `jq`, `nmap`, `whois`, `dig` (bind-utils), `whatweb` (opcional), `subfinder` o `amass` (opcional).
-- GitHub Actions usa `shellcheck` para linter.
-
-> Nota: El script funciona aunque algunas herramientas falten — las saltará y documentará lo que hace. 
+- Linux / macOS / Windows con entorno bash.
+- Python 3.x (si aplica).
+- Dependencias: `nmap`, `curl`, `whois`, `jq` (según el script).
 
 ## Uso
-Clona y ejecuta (modo seguro):
 ```bash
-git clone https://github.com/<tu_usuario>/zurzulu-recon.git
-cd zurzulu-recon
-chmod +x zurzulu-recon.sh
-./zurzulu-recon.sh --target example.com --outdir output --dry-run
+./zurzulu-recon.sh [opciones]
